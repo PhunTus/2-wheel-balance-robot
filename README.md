@@ -1,3 +1,7 @@
+# 📧 Contact
+Co-author:
+- **Le Minh Thuan** - [Leminhthuan2004@gmail.com](mailto:Leminhthuan2004@gmail.com)
+- **Phung Van Tu** - [Phungtu1310@gmail.com](mailto:Phungtu1310@gmail.com)
 # 🤖 2-wheel-balance-robot
 - All source of project
 # 💾 Discription
