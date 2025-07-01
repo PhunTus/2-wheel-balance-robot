@@ -16,7 +16,4 @@ and the output is the value of PWM that control the speed and angle of motors.
 - Step motor NEMA 17
 - 12-Volt battery
 - Frame of robot
-# 📧 Contact
-Co-author:
-- **Le Minh Thuan** - [Leminhthuan2004@gmail.com](mailto:Leminhthuan2004@gmail.com)
-- **Phung Van Tu** - [Phungtu1310@gmail.com](mailto:Phungtu1310@gmail.com)
+
