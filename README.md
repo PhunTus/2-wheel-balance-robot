@@ -11,7 +11,7 @@ and the output is the value of PWM that control the speed and angle of motors.
 - Robot can be controlled through Bluetooth connection using module HC-05.
 # 🧰 Parts
 - Arduino Nano
-- Extend module for Stepper driver
+- Extend module for Stepper driver CNC shield V3
 - Step driver A4988
 - Step motor NEMA 17
 - 12-Volt battery
