@@ -1,0 +1,35 @@
+//  X
+#define STEP_PIN_X 2
+#define DIR_PIN_X 5
+//  Y
+#define STEP_PIN_Y 3
+#define DIR_PIN_Y 6
+// ENABLE 
+#define EN_PIN    8
+const int steps_per_rev = 200 * 16;  // 1 vòng = 3200 bước (với 1/16 step)
+const int rounds = 5;                // số vòng mỗi lần quay
+int direction = HIGH;                // chiều quay ban đầu
+void setup() {
+  pinMode(STEP_PIN_X, OUTPUT);
+  pinMode(DIR_PIN_X, OUTPUT);
+  pinMode(STEP_PIN_Y, OUTPUT);
+  pinMode(DIR_PIN_Y, OUTPUT);
+  pinMode(EN_PIN, OUTPUT);
+  digitalWrite(EN_PIN, LOW);
+  digitalWrite(DIR_PIN_X, direction);
+  digitalWrite(DIR_PIN_Y, direction);
+}
+void loop() {
+  for (int i = 0; i < steps_per_rev * rounds; i++) {
+    digitalWrite(STEP_PIN_X, HIGH);
+    digitalWrite(STEP_PIN_Y, HIGH);
+    delayMicroseconds(200);
+    digitalWrite(STEP_PIN_X, LOW);
+    digitalWrite(STEP_PIN_Y, LOW);
+    delayMicroseconds(200);
+  }
+  direction = !direction;
+  digitalWrite(DIR_PIN_X, direction);
+  digitalWrite(DIR_PIN_Y, direction);
+  delay(1000); // Dừng 1 giây
+}
