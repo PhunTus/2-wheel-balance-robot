@@ -11,8 +11,8 @@ MPU6050 mpu(Wire);
 #define STEP_L   3
 
 // === PID tham số (tùy chỉnh thực nghiệm)
-#define Kp 90
-#define Ki 10
+#define Kp 100
+#define Ki 50
 #define Kd 1.5
 #define A1 0.1
 #define A2 0.9
@@ -120,7 +120,7 @@ void loop() {
     float filteredAngle = kalmanFilter(rawAngle, gyroRate, dt);
 
     // === Bù lệch góc ban đầu
-    float trueAngle = filteredAngle - angleOffset;
+    float trueAngle = -(filteredAngle - angleOffset);
 
     float error = setPoint - trueAngle;
 
@@ -137,11 +137,11 @@ void loop() {
     E2_1 = E1_1;
     E1_1 = E1;
 
-    // Điều khiển motor
-    setMotorSpeed(DIR_R, STEP_R, filOutput);
-    setMotorSpeed(DIR_L, STEP_L, -filOutput);
+    // === Motor control: hai bánh quay ngược chiều nhau
+    setMotorSpeed(DIR_L, STEP_L,  +filOutput);
+    setMotorSpeed(DIR_R, STEP_R, +filOutput);
 
-    // In debug
+    // Debug
     Serial.print("Goc thuc: ");
     Serial.print(trueAngle);
     Serial.print(" | PID: ");
