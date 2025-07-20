@@ -1,0 +1,150 @@
+#include <Wire.h>
+#include <MPU6050_tockn.h>
+
+MPU6050 mpu(Wire);
+
+// CNC Shield V3 - Stepper pins
+#define EN_PIN   8
+#define DIR_R    5   // Right motor (X)
+#define STEP_R   2
+#define DIR_L    6   // Left motor (Y)
+#define STEP_L   3
+
+// === PID tham số (tùy chỉnh thực nghiệm)
+#define Kp 90
+#define Ki 10
+#define Kd 1.5
+#define A1 0.1
+#define A2 0.9
+#define T  0.02  // chu kỳ vòng lặp ~20ms
+
+// === Kalman filter
+float Q_angle = 0.001;
+float Q_bias = 0.003;
+float R_measure = 0.03;
+float angle = 0;  // Góc đã lọc
+float bias = 0;
+float rate;
+float P[2][2] = {{1, 0}, {0, 1}};
+
+// === PID biến điều khiển
+float setPoint = 0.0;
+float E1 = 0, E1_1 = 0, E2_1 = 0;
+float Output = 0, LastOutput = 0, filOutput = 0;
+
+unsigned long lastMicros;
+float dt;
+
+// === Góc offset khi khởi động (bù sai lệch ban đầu)
+float angleOffset = 0;
+
+// === Hàm điều khiển stepper motor
+void setMotorSpeed(int motorPinDir, int motorPinStep, float speed) {
+  if (abs(speed) < 5) return;
+
+  digitalWrite(motorPinDir, speed > 0 ? HIGH : LOW);
+  int pulses = constrain(abs(speed), 0, 600);
+
+  for (int i = 0; i < pulses; i++) {
+    digitalWrite(motorPinStep, HIGH);
+    delayMicroseconds(250);
+    digitalWrite(motorPinStep, LOW);
+    delayMicroseconds(250);
+  }
+}
+
+// === Kalman filter
+float kalmanFilter(float newAngle, float newRate, float dt) {
+  rate = newRate - bias;
+  angle += dt * rate;
+
+  P[0][0] += dt * (dt*P[1][1] - P[0][1] - P[1][0] + Q_angle);
+  P[0][1] -= dt * P[1][1];
+  P[1][0] -= dt * P[1][1];
+  P[1][1] += Q_bias * dt;
+
+  float S = P[0][0] + R_measure;
+  float K[2];
+  K[0] = P[0][0] / S;
+  K[1] = P[1][0] / S;
+
+  float y = newAngle - angle;
+  angle += K[0] * y;
+  bias += K[1] * y;
+
+  float P00_temp = P[0][0];
+  float P01_temp = P[0][1];
+
+  P[0][0] -= K[0] * P00_temp;
+  P[0][1] -= K[0] * P01_temp;
+  P[1][0] -= K[1] * P00_temp;
+  P[1][1] -= K[1] * P01_temp;
+
+  return angle;
+}
+
+void setup() {
+  Serial.begin(115200);
+  Wire.begin();
+
+  pinMode(EN_PIN, OUTPUT);
+  pinMode(DIR_L, OUTPUT);
+  pinMode(STEP_L, OUTPUT);
+  pinMode(DIR_R, OUTPUT);
+  pinMode(STEP_R, OUTPUT);
+  digitalWrite(EN_PIN, LOW);  // bật driver
+
+  mpu.begin();
+  mpu.calcGyroOffsets(true);  // hiệu chỉnh khi nằm yên 3s
+
+  delay(1000);  // chờ ổn định cảm biến
+
+  mpu.update();  // cập nhật để lấy góc ban đầu
+  float initialAngle = mpu.getAngleX();  // hoặc getAngleY nếu cần
+  angleOffset = initialAngle;  // lưu góc offset để trừ sau này
+
+  lastMicros = micros();
+}
+
+void loop() {
+  mpu.update();
+  unsigned long now = micros();
+
+  if (now - lastMicros >= 20000) {  // 20ms
+    dt = (now - lastMicros) / 1000000.0;
+    lastMicros = now;
+
+    float rawAngle = mpu.getAngleX();   // hoặc Y nếu cần
+    float gyroRate = mpu.getGyroX();   // hoặc Y tương ứng
+
+    float filteredAngle = kalmanFilter(rawAngle, gyroRate, dt);
+
+    // === Bù lệch góc ban đầu
+    float trueAngle = filteredAngle - angleOffset;
+
+    float error = setPoint - trueAngle;
+
+    // PID bậc 2 dạng số
+    float alpha = 2 * T * Kp + Ki * T * T + 2 * Kd;
+    float beta  = T * T * Ki - 4 * Kd - 2 * T * Kp;
+    float gamma = 2 * Kd;
+
+    E1 = error;
+    Output = (alpha * E1 + beta * E1_1 + gamma * E2_1 + 2 * T * LastOutput) / (2 * T);
+    filOutput = A1 * Output + A2 * LastOutput;
+
+    LastOutput = filOutput;
+    E2_1 = E1_1;
+    E1_1 = E1;
+
+    // Điều khiển motor
+    setMotorSpeed(DIR_R, STEP_R, filOutput);
+    setMotorSpeed(DIR_L, STEP_L, -filOutput);
+
+    // In debug
+    Serial.print("Goc thuc: ");
+    Serial.print(trueAngle);
+    Serial.print(" | PID: ");
+    Serial.println(filOutput);
+  }
+}
