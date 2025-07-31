@@ -10,12 +10,12 @@ The input of system is angle value from MPU6050 Sensor (feedback signal)
 and the output is the value of PWM that control the speed and angle of motors.
 - Robot can be controlled through Bluetooth connection using module HC-05.
 # 🧰 Parts
-- Arduino Nano
-- Extend module for Stepper driver CNC shield V3
-- Step driver A4988
-- Step motor NEMA 17
-- 12-Volt battery
-- Frame of robot
+- 01 x Arduino UNO R3
+- 01 x Extend module for Stepper driver CNC shield V3
+- 02 x Stepper driver A4988
+- 02 x Stepper motor NEMA 17
+- 01 x 12-Volt battery
+- Body of robot(Frame, holder, wheel,... )
 # 🦾 Working Principles
 - This will work like an inverted pendulum. If the body of bot move forward,   
 the wheels must run forward to maintain the balance - otherwise, it will fall down.
