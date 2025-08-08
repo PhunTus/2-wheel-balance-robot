@@ -1,150 +1,170 @@
+#include <PID_v1.h>
+#include "I2Cdev.h"
+#include "MPU6050_6Axis_MotionApps20.h"
 #include <Wire.h>
-#include <MPU6050_tockn.h>
 
-MPU6050 mpu(Wire);
+// MPU6050 + DMP
+MPU6050 mpu;
+bool dmpReady = false;
+uint16_t packetSize;
+uint8_t fifoBuffer[64];
+float ypr[3];  // yaw pitch roll
 
-// CNC Shield V3 - Stepper pins
-#define EN_PIN   8
-#define DIR_R    5   // Right motor (X)
-#define STEP_R   2
-#define DIR_L    6   // Left motor (Y)
-#define STEP_L   3
+// PID
+double input = 0.0;
+double setpoint = 0.0;
+double output = 0.0;
 
-// === PID tham số (tùy chỉnh thực nghiệm)
-#define Kp 100
-#define Ki 50
-#define Kd 1.5
-#define A1 0.1
-#define A2 0.9
-#define T  0.02  // chu kỳ vòng lặp ~20ms
+// PID thông số (có thể hiệu chỉnh)
+double Kp = 10.0, Ki = 0.5, Kd = 0.1;
+PID pid(&input, &output, &setpoint, Kp, Ki, Kd, DIRECT);
 
-// === Kalman filter
-float Q_angle = 0.001;
-float Q_bias = 0.003;
-float R_measure = 0.03;
-float angle = 0;  // Góc đã lọc
-float bias = 0;
-float rate;
-float P[2][2] = {{1, 0}, {0, 1}};
+// Chân stepper 2 bánh
+#define LEFT_STEP_PIN   2
+#define LEFT_DIR_PIN    5
 
-// === PID biến điều khiển
-float setPoint = 0.0;
-float E1 = 0, E1_1 = 0, E2_1 = 0;
-float Output = 0, LastOutput = 0, filOutput = 0;
+#define RIGHT_STEP_PIN  3
+#define RIGHT_DIR_PIN   6
 
-unsigned long lastMicros;
-float dt;
+#define ENABLE_PIN      8
 
-// === Góc offset khi khởi động (bù sai lệch ban đầu)
-float angleOffset = 0;
+// Biến điều khiển stepper
+volatile long stepIntervalLeft = 0;
+volatile long stepIntervalRight = 0;
 
-// === Hàm điều khiển stepper motor
-void setMotorSpeed(int motorPinDir, int motorPinStep, float speed) {
-  if (abs(speed) < 5) return;
+volatile bool stepStateLeft = false;
+volatile bool stepStateRight = false;
 
-  digitalWrite(motorPinDir, speed > 0 ? HIGH : LOW);
-  int pulses = constrain(abs(speed), 0, 600);
+const long MIN_STEP_INTERVAL = 5;
+const long MAX_STEP_INTERVAL = 500;
 
-  for (int i = 0; i < pulses; i++) {
-    digitalWrite(motorPinStep, HIGH);
-    delayMicroseconds(250);
-    digitalWrite(motorPinStep, LOW);
-    delayMicroseconds(250);
+// Timer1 ISR tạo xung stepper cho 2 bánh
+ISR(TIMER1_COMPA_vect) {
+  static long counterLeft = 0;
+  static long counterRight = 0;
+
+  // Left motor step
+  if (stepIntervalLeft > 0) {
+    if (++counterLeft >= stepIntervalLeft) {
+      counterLeft = 0;
+      stepStateLeft = !stepStateLeft;
+      digitalWrite(LEFT_STEP_PIN, stepStateLeft);
+    }
+  }
+
+  // Right motor step
+  if (stepIntervalRight > 0) {
+    if (++counterRight >= stepIntervalRight) {
+      counterRight = 0;
+      stepStateRight = !stepStateRight;
+      digitalWrite(RIGHT_STEP_PIN, stepStateRight);
+    }
   }
 }
 
-// === Kalman filter
-float kalmanFilter(float newAngle, float newRate, float dt) {
-  rate = newRate - bias;
-  angle += dt * rate;
+void updateStepperControl(double pidOutput) {
+  // Chia lực điều khiển đều cho 2 bánh (cùng chiều, cùng tốc độ)
+  if (abs(pidOutput) < 1) {
+    stepIntervalLeft = 0;
+    stepIntervalRight = 0;
+    return;
+  }
 
-  P[0][0] += dt * (dt*P[1][1] - P[0][1] - P[1][0] + Q_angle);
-  P[0][1] -= dt * P[1][1];
-  P[1][0] -= dt * P[1][1];
-  P[1][1] += Q_bias * dt;
+  if (pidOutput > 0) {
+    digitalWrite(LEFT_DIR_PIN, LOW);
+    digitalWrite(RIGHT_DIR_PIN, LOW);
+  } else {
+    digitalWrite(LEFT_DIR_PIN, HIGH);
+    digitalWrite(RIGHT_DIR_PIN, HIGH);
+  }
 
-  float S = P[0][0] + R_measure;
-  float K[2];
-  K[0] = P[0][0] / S;
-  K[1] = P[1][0] / S;
+  long interval = 800 / abs(pidOutput);
+  if (interval < MIN_STEP_INTERVAL) interval = MIN_STEP_INTERVAL;
+  if (interval > MAX_STEP_INTERVAL) interval = MAX_STEP_INTERVAL;
 
-  float y = newAngle - angle;
-  angle += K[0] * y;
-  bias += K[1] * y;
-
-  float P00_temp = P[0][0];
-  float P01_temp = P[0][1];
-
-  P[0][0] -= K[0] * P00_temp;
-  P[0][1] -= K[0] * P01_temp;
-  P[1][0] -= K[1] * P00_temp;
-  P[1][1] -= K[1] * P01_temp;
-
-  return angle;
+  stepIntervalLeft = interval;
+  stepIntervalRight = interval;
 }
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(250000);
   Wire.begin();
 
-  pinMode(EN_PIN, OUTPUT);
-  pinMode(DIR_L, OUTPUT);
-  pinMode(STEP_L, OUTPUT);
-  pinMode(DIR_R, OUTPUT);
-  pinMode(STEP_R, OUTPUT);
-  digitalWrite(EN_PIN, LOW);  // bật driver
+  pinMode(LEFT_STEP_PIN, OUTPUT);
+  pinMode(LEFT_DIR_PIN, OUTPUT);
+  pinMode(RIGHT_STEP_PIN, OUTPUT);
+  pinMode(RIGHT_DIR_PIN, OUTPUT);
+  pinMode(ENABLE_PIN, OUTPUT);
 
-  mpu.begin();
-  mpu.calcGyroOffsets(true);  // hiệu chỉnh khi nằm yên 3s
+  digitalWrite(ENABLE_PIN, LOW);  // Enable stepper drivers
 
-  delay(1000);  // chờ ổn định cảm biến
+  mpu.initialize();
 
-  mpu.update();  // cập nhật để lấy góc ban đầu
-  float initialAngle = mpu.getAngleX();  // hoặc getAngleY nếu cần
-  angleOffset = initialAngle;  // lưu góc offset để trừ sau này
+  int devStatus = mpu.dmpInitialize();
 
-  lastMicros = micros();
+  if (devStatus == 0) {
+    mpu.setDMPEnabled(true);
+    dmpReady = true;
+    packetSize = mpu.dmpGetFIFOPacketSize();
+
+    pid.SetMode(AUTOMATIC);
+    pid.SetSampleTime(10);
+    pid.SetOutputLimits(-400, 400);
+
+    noInterrupts();
+
+    // Timer1 setup 20kHz
+    TCCR1A = 0;
+    TCCR1B = 0;
+    OCR1A = 79;
+    TCCR1B |= (1 << WGM12);
+    TCCR1B |= (1 << CS11);
+    TIMSK1 |= (1 << OCIE1A);
+
+    interrupts();
+
+    Serial.println("DMP ready.");
+  } else {
+    Serial.print("DMP initialization failed: ");
+    Serial.println(devStatus);
+    while (1);
+  }
 }
 
 void loop() {
-  mpu.update();
-  unsigned long now = micros();
+  if (!dmpReady) return;
 
-  if (now - lastMicros >= 20000) {  // 20ms
-    dt = (now - lastMicros) / 1000000.0;
-    lastMicros = now;
+  uint16_t fifoCount = mpu.getFIFOCount();
 
-    float rawAngle = mpu.getAngleX();   // hoặc Y nếu cần
-    float gyroRate = mpu.getGyroX();   // hoặc Y tương ứng
+  if (fifoCount == 1024) {
+    mpu.resetFIFO();
+    Serial.println("FIFO overflow! Reset FIFO.");
+    return;
+  }
 
-    float filteredAngle = kalmanFilter(rawAngle, gyroRate, dt);
+  while (fifoCount >= packetSize) {
+    mpu.getFIFOBytes(fifoBuffer, packetSize);
 
-    // === Bù lệch góc ban đầu
-    float trueAngle = -(filteredAngle - angleOffset);
+    Quaternion q;
+    VectorFloat gravity;
+    mpu.dmpGetQuaternion(&q, fifoBuffer);
+    mpu.dmpGetGravity(&gravity, &q);
+    mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
 
-    float error = setPoint - trueAngle;
+    input = ypr[2] * 180 / PI;  // Góc roll
 
-    // PID bậc 2 dạng số
-    float alpha = 2 * T * Kp + Ki * T * T + 2 * Kd;
-    float beta  = T * T * Ki - 4 * Kd - 2 * T * Kp;
-    float gamma = 2 * Kd;
+    pid.Compute();
+    updateStepperControl(output);
 
-    E1 = error;
-    Output = (alpha * E1 + beta * E1_1 + gamma * E2_1 + 2 * T * LastOutput) / (2 * T);
-    filOutput = A1 * Output + A2 * LastOutput;
+    fifoCount -= packetSize;
+  }
 
-    LastOutput = filOutput;
-    E2_1 = E1_1;
-    E1_1 = E1;
-
-    // === Motor control: hai bánh quay ngược chiều nhau
-    setMotorSpeed(DIR_L, STEP_L,  +filOutput);
-    setMotorSpeed(DIR_R, STEP_R, +filOutput);
-
-    // Debug
-    Serial.print("Goc thuc: ");
-    Serial.print(trueAngle);
-    Serial.print(" | PID: ");
-    Serial.println(filOutput);
+  static unsigned long lastPrint = 0;
+  if (millis() - lastPrint > 200) {
+    lastPrint = millis();
+    Serial.print("Roll: ");
+    Serial.print(input, 2);
+    Serial.print(" | PID output: ");
+    Serial.println(output, 2);
   }
 }
