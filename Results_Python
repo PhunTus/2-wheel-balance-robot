@@ -1,0 +1,58 @@
+import serial
+import matplotlib.pyplot as plt
+import pandas as pd
+from datetime import datetime
+
+# Kết nối serial (chỉnh cổng COM và baudrate)
+ser = serial.Serial('COM3', 250000, timeout=1)  
+
+times, setpoints, inputs, outputs = [], [], [], []
+
+print("Đang đọc dữ liệu từ Arduino... Nhấn Ctrl+C để dừng.")
+
+try:
+    while True:
+        line = ser.readline().decode('utf-8').strip()
+        if line:
+            try:
+                t, sp, inp, outp = map(float, line.split(','))
+                times.append(t / 1000.0)   # ms → giây
+                setpoints.append(sp)
+                inputs.append(inp)
+                outputs.append(outp)
+            except ValueError:
+                pass  # bỏ qua dòng lỗi
+except KeyboardInterrupt:
+    print("Dừng đọc dữ liệu.")
+
+ser.close()
+
+# Đưa vào DataFrame
+df = pd.DataFrame({
+    'time': times,
+    'setpoint': setpoints,
+    'input': inputs,
+    'output': outputs
+})
+
+# Tính sai số
+df['error'] = df['setpoint'] - df['input']
+
+# Vẽ biểu đồ
+plt.figure(figsize=(10,6))
+plt.plot(df['time'], df['setpoint'], label='Setpoint', linestyle='--')
+plt.plot(df['time'], df['input'], label='Response')
+plt.plot(df['time'], df['error'], label='Error')
+plt.xlabel('Time (s)')
+plt.ylabel('Value')
+plt.title('PID System Response')
+plt.legend()
+plt.grid(True)
+plt.show()
+// Calculate Python
+overshoot = (max(df['input']) - df['setpoint'].iloc[0]) / df['setpoint'].iloc[0] * 100
+steady_state_error = df['error'].iloc[-1]
+
+print(f"Overshoot: {overshoot:.2f}%")
+print(f"Steady-state error: {steady_state_error:.4f}")
+
