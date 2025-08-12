@@ -1,58 +1,57 @@
 import serial
 import matplotlib.pyplot as plt
-import pandas as pd
-from datetime import datetime
+import matplotlib.animation as animation
+from collections import deque
 
-# Kết nối serial (chỉnh cổng COM và baudrate)
-ser = serial.Serial('COM3', 250000, timeout=1)  
+# ===== Cấu hình Serial =====
+PORT = 'COM10'        # Thay bằng cổng Arduino của bạn
+BAUD = 250000
+ser = serial.Serial(PORT, BAUD, timeout=1)
 
-times, setpoints, inputs, outputs = [], [], [], []
+# ===== Bộ nhớ đệm cho dữ liệu =====
+max_len = 200  # số điểm hiển thị trên đồ thị
+times = deque(maxlen=max_len)
+setpoints = deque(maxlen=max_len)
+inputs = deque(maxlen=max_len)
+outputs = deque(maxlen=max_len)
 
-print("Đang đọc dữ liệu từ Arduino... Nhấn Ctrl+C để dừng.")
+# ===== Hàm đọc dữ liệu từ Arduino =====
+def read_serial():
+    line = ser.readline().decode('utf-8').strip()
+    if line:
+        try:
+            t, sp, inp, outp = map(float, line.split(','))
+            times.append(t / 1000.0)  # ms → giây
+            setpoints.append(sp)
+            inputs.append(inp)
+            outputs.append(outp)
+        except ValueError:
+            pass  # bỏ qua dòng lỗi
 
-try:
-    while True:
-        line = ser.readline().decode('utf-8').strip()
-        if line:
-            try:
-                t, sp, inp, outp = map(float, line.split(','))
-                times.append(t / 1000.0)   # ms → giây
-                setpoints.append(sp)
-                inputs.append(inp)
-                outputs.append(outp)
-            except ValueError:
-                pass  # bỏ qua dòng lỗi
-except KeyboardInterrupt:
-    print("Dừng đọc dữ liệu.")
+# ===== Thiết lập matplotlib =====
+fig, ax = plt.subplots()
+ax.set_title("PID System Response (Real-Time)")
+ax.set_xlabel("Time (s)")
+ax.set_ylabel("Value")
+ax.grid(True)
+
+line_setpoint, = ax.plot([], [], 'r--', label="Setpoint")
+line_input, = ax.plot([], [], 'b-', label="Input")
+line_output, = ax.plot([], [], 'g-', label="PID Output")
+ax.legend()
+
+# ===== Hàm cập nhật đồ thị =====
+def update(frame):
+    read_serial()
+    if times:
+        line_setpoint.set_data(times, setpoints)
+        line_input.set_data(times, inputs)
+        line_output.set_data(times, outputs)
+        ax.relim()
+        ax.autoscale_view()
+    return line_setpoint, line_input, line_output
+
+ani = animation.FuncAnimation(fig, update, interval=50, blit=False)
+plt.show()
 
 ser.close()
-
-# Đưa vào DataFrame
-df = pd.DataFrame({
-    'time': times,
-    'setpoint': setpoints,
-    'input': inputs,
-    'output': outputs
-})
-
-# Tính sai số
-df['error'] = df['setpoint'] - df['input']
-
-# Vẽ biểu đồ
-plt.figure(figsize=(10,6))
-plt.plot(df['time'], df['setpoint'], label='Setpoint', linestyle='--')
-plt.plot(df['time'], df['input'], label='Response')
-plt.plot(df['time'], df['error'], label='Error')
-plt.xlabel('Time (s)')
-plt.ylabel('Value')
-plt.title('PID System Response')
-plt.legend()
-plt.grid(True)
-plt.show()
-// Calculate Python
-overshoot = (max(df['input']) - df['setpoint'].iloc[0]) / df['setpoint'].iloc[0] * 100
-steady_state_error = df['error'].iloc[-1]
-
-print(f"Overshoot: {overshoot:.2f}%")
-print(f"Steady-state error: {steady_state_error:.4f}")
-
