@@ -15,7 +15,7 @@ double input = 0.0;
 double setpoint = 0.0;
 double output = 0.0;
 
-// PID thông số (có thể hiệu chỉnh)
+// Tunning cho PID
 double Kp = 10.0, Ki = 0.5, Kd = 0.1;
 PID pid(&input, &output, &setpoint, Kp, Ki, Kd, DIRECT);
 
